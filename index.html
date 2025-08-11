@@ -1,0 +1,162 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Regime Allocator</title>
+    <style>
+      :root { --gap: 12px; }
+      body{font:16px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;margin:2rem auto;max-width:760px;padding:0 1rem;background:#fff;color:#111}
+      h1{font-size:1.6rem;margin:0 0 1rem}
+      form{display:grid;gap:var(--gap);background:#f6f7f9;border:1px solid #e6e8eb;border-radius:14px;padding:16px}
+      fieldset{border:0;padding:0;margin:0;display:grid;gap:10px}
+      label{display:grid;grid-template-columns:220px 1fr;align-items:center;gap:8px}
+      input,select,button{font:inherit}
+      input,select{padding:.5rem;border:1px solid #cfd3d9;border-radius:10px;background:#fff}
+      .row{display:grid;grid-template-columns:1fr 1fr;gap:var(--gap)}
+      button{padding:.65rem 1rem;border-radius:12px;border:1px solid #0f62fe;background:#0f62fe;color:#fff;cursor:pointer}
+      button:disabled{opacity:.6;cursor:not-allowed}
+      .hint{font-size:.875rem;color:#555}
+      #out{white-space:pre-wrap;background:#0b1020;color:#d6e1ff;border-radius:12px;padding:12px;overflow:auto;max-height:60vh}
+      .error{color:#b00020;white-space:pre-wrap}
+      .ok{color:#0a6}
+    </style>
+  </head>
+  <body>
+    <h1>Regime Allocator</h1>
+
+    <form id="alloc-form">
+      <div class="row">
+        <label>API base URL
+          <input id="api" name="api" placeholder="https://allocator.onrender.com" value="https://allocator.onrender.com" />
+        </label>
+        <label>Beta window (months)
+          <input type="number" name="beta_window" value="40" min="6" max="120" />
+        </label>
+      </div>
+
+      <div class="row">
+        <label>Cap (0…1, optional)
+          <input type="number" name="cap" step="0.05" placeholder="e.g. 0.30" />
+        </label>
+        <label>Age (optional)
+          <input type="number" name="age" min="18" max="100" placeholder="e.g. 32" />
+        </label>
+      </div>
+
+      <fieldset>
+        <legend class="hint">Profile & Liabilities</legend>
+        <label>Has fixed liabilities to match?
+          <select name="has_liabilities">
+            <option value="no" selected>No</option>
+            <option value="yes">Yes — use liability-matching first</option>
+          </select>
+        </label>
+        <label>Risk profile
+          <select name="risk_profile">
+            <option value="preserve">Capital preservation (low downside)</option>
+            <option value="balanced" selected>Balanced</option>
+            <option value="aggressive">Aggressive / long horizon</option>
+          </select>
+        </label>
+      </fieldset>
+
+      <div class="hint">Tip: for local testing, run this file via a local web server (e.g. <code>python -m http.server</code>) so your browser sends a proper <code>Origin</code> header. Make sure your FastAPI CORS allows that origin.</div>
+
+      <button id="go" type="submit">Compute allocation</button>
+    </form>
+
+    <p id="status" class="hint"></p>
+    <pre id="out"></pre>
+
+    <script>
+      const form = document.getElementById("alloc-form");
+      const btn = document.getElementById("go");
+      const out = document.getElementById("out");
+      const statusEl = document.getElementById("status");
+
+      function profileToParams(profile){
+        // Map user-friendly profiles to simple knobs you can read server-side.
+        switch(profile){
+          case 'preserve': return { target_vol: 0.06, cap_default: 0.25 };
+          case 'aggressive': return { target_vol: 0.16, cap_default: 0.60 };
+          default: return { target_vol: 0.10, cap_default: 0.40 };
+        }
+      }
+
+      async function tryPost(url, payload){
+        const res = await fetch(url, {
+          method: "POST",
+          headers: {"Content-Type":"application/json"},
+          body: JSON.stringify(payload)
+        });
+        if(!res.ok){
+          const text = await res.text().catch(()=>"<no body>");
+          const err = new Error(`HTTP ${res.status} on ${url}:\n` + text);
+          err.status = res.status;
+          throw err;
+        }
+        return res.json();
+      }
+
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        out.textContent = "";
+        statusEl.className = "hint";
+        statusEl.textContent = "Running…";
+        btn.disabled = true;
+
+        const fd = new FormData(form);
+        const API = (fd.get("api") || "").replace(/\/$/, "");
+        const beta_window = Number(fd.get("beta_window") || 40);
+        const capInput = fd.get("cap");
+        const cap = capInput ? Number(capInput) : undefined;
+        const has_liab = fd.get("has_liabilities") === 'yes';
+        const risk_profile = fd.get("risk_profile");
+        const age = fd.get("age") ? Number(fd.get("age")) : undefined;
+
+        const knobs = profileToParams(risk_profile);
+        const effectiveCap = (typeof cap === 'number' && !Number.isNaN(cap)) ? cap : knobs.cap_default;
+
+        // Payload the backend can evolve to accept.
+        const payload = {
+          beta_window,
+          cap: effectiveCap,
+          risk_profile,
+          target_vol: knobs.target_vol,
+          age,
+          has_liabilities: has_liab
+        };
+
+        try{
+          // If user has liabilities, try the norisk-first route; else, straight allocator.
+          const primary = has_liab ? `${API}/norisk/allocate` : `${API}/allocate`;
+          const fallback = has_liab ? `${API}/allocate` : `${API}/norisk/allocate`;
+
+          let json;
+          try {
+            json = await tryPost(primary, payload);
+          } catch (err) {
+            // If the endpoint doesn't exist (404) or not allowed (405), try the fallback.
+            if (err.status === 404 || err.status === 405) {
+              json = await tryPost(fallback, payload);
+            } else {
+              throw err;
+            }
+          }
+
+          out.textContent = JSON.stringify(json, null, 2);
+          statusEl.textContent = "Done.";
+          statusEl.className = "ok";
+        } catch(err){
+          statusEl.textContent = err.message;
+          statusEl.className = "error";
+          out.textContent = "";
+          console.error(err);
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>
