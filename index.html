@@ -4,157 +4,368 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>Regime Allocator</title>
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" />
     <style>
-      :root { --gap: 12px; }
-      body{font:16px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;margin:2rem auto;max-width:760px;padding:0 1rem;background:#fff;color:#111}
-      h1{font-size:1.6rem;margin:0 0 1rem}
-      form{display:grid;gap:var(--gap);background:#f6f7f9;border:1px solid #e6e8eb;border-radius:14px;padding:16px}
+      :root { --gap: 14px; }
+      body{font:16px/1.55 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;margin:2rem auto;max-width:900px;padding:0 1rem;color:#0b1220;background:#fff}
+      h1{font-size:1.75rem;margin:0 0 .75rem}
+      .sub{color:#52607a;margin:0 0 1.2rem}
+      .card{background:#f6f8fb;border:1px solid #e6eaf0;border-radius:14px;padding:16px;margin:0 0 var(--gap)}
+      form{display:grid;gap:var(--gap)}
       fieldset{border:0;padding:0;margin:0;display:grid;gap:10px}
-      label{display:grid;grid-template-columns:220px 1fr;align-items:center;gap:8px}
-      input,select,button{font:inherit}
-      input,select{padding:.5rem;border:1px solid #cfd3d9;border-radius:10px;background:#fff}
+      label{display:grid;grid-template-columns:260px 1fr;align-items:center;gap:10px}
+      input,select,button,textarea{font:inherit}
+      input,select,textarea{padding:.55rem .7rem;border:1px solid #cfd6e4;border-radius:10px;background:#fff}
       .row{display:grid;grid-template-columns:1fr 1fr;gap:var(--gap)}
-      button{padding:.65rem 1rem;border-radius:12px;border:1px solid #0f62fe;background:#0f62fe;color:#fff;cursor:pointer}
+      .row-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:var(--gap)}
+      button{padding:.7rem 1.1rem;border-radius:12px;border:1px solid #0f62fe;background:#0f62fe;color:#fff;cursor:pointer}
+      button.secondary{background:#fff;color:#0f62fe}
       button:disabled{opacity:.6;cursor:not-allowed}
-      .hint{font-size:.875rem;color:#555}
+      .hint{font-size:.9rem;color:#5b6a82}
       #out{white-space:pre-wrap;background:#0b1020;color:#d6e1ff;border-radius:12px;padding:12px;overflow:auto;max-height:60vh}
       .error{color:#b00020;white-space:pre-wrap}
       .ok{color:#0a6}
+      .grid{display:grid;gap:var(--gap)}
+      .two{grid-template-columns:1fr 1fr}
+      .pill{display:inline-block;padding:.25rem .5rem;border-radius:999px;background:#e9eef9;color:#233}
+      .cards{display:grid;grid-template-columns:1fr;gap:var(--gap)}
+      @media (min-width: 860px){ .cards{grid-template-columns:1fr 1fr} }
+      .strategy{background:#ffffff;border:1px solid #e6eaf0;border-radius:12px;padding:12px}
+      .strategy h3{margin:.2rem 0 .25rem;font-size:1.05rem}
+      .strategy p{margin:.2rem 0 .4rem;color:#445}
+      .muted{color:#667}
+      table{width:100%;border-collapse:collapse}
+      th,td{padding:.5rem;border-bottom:1px solid #e6eaf0;text-align:left}
+      canvas{max-width:100%;}
     </style>
   </head>
   <body>
     <h1>Regime Allocator</h1>
+    <p class="sub">Answer a few questions, we’ll recommend a strategy, you can still pick others, then we’ll fetch an allocation from your API and visualize it.</p>
 
-    <form id="alloc-form">
-      <div class="row">
-        <label>API base URL
-          <input id="api" name="api" placeholder="https://allocator.onrender.com" value="https://allocator.onrender.com" />
-        </label>
-        <label>Beta window (months)
-          <input type="number" name="beta_window" value="40" min="6" max="120" />
-        </label>
+    <div class="card">
+      <form id="wizard">
+        <fieldset class="row">
+          <label>Full name <input type="text" name="name" placeholder="e.g. Ilse Hutten" required /></label>
+          <label>Age <input type="number" name="age" min="18" max="100" required /></label>
+        </fieldset>
+
+        <fieldset class="row-3">
+          <label>Liabilities to match?
+            <select name="has_liabilities">
+              <option value="no" selected>No</option>
+              <option value="yes">Yes (use liability-matching first)</option>
+            </select>
+          </label>
+          <label>Investment horizon (years)
+            <input type="number" name="horizon" min="1" max="60" placeholder="e.g. 15" />
+          </label>
+          <label>Primary goal
+            <select name="goal">
+              <option value="preserve">Preserve capital / low downside</option>
+              <option value="retirement" selected>Retirement saving</option>
+              <option value="house">Buy a house</option>
+              <option value="grow">Maximize long-term wealth</option>
+            </select>
+          </label>
+        </fieldset>
+
+        <fieldset class="row">
+          <label>Target year (optional)
+            <input type="number" name="target_year" placeholder="e.g. 2035" />
+          </label>
+          <label>Target amount (optional)
+            <input type="number" name="target_amount" placeholder="e.g. 200000" />
+          </label>
+        </fieldset>
+
+        <fieldset class="row">
+          <label>Beta window (months)
+            <input type="number" name="beta_window" value="40" min="6" max="120" />
+          </label>
+          <label>Cap (0…1, optional)
+            <input type="number" name="cap" step="0.05" placeholder="e.g. 0.30" />
+          </label>
+        </fieldset>
+
+        <div class="hint">We use your answers to pick a baseline strategy. You can still choose another before computing.</div>
+        <div class="row">
+          <button type="submit">Recommend a strategy</button>
+          <button id="reset" type="button" class="secondary">Reset</button>
+        </div>
+      </form>
+    </div>
+
+    <div id="rec" class="card" style="display:none">
+      <h2 style="margin:0 0 .4rem">Recommended strategy</h2>
+      <div id="recText" class="hint"></div>
+      <div class="cards" id="strategyCards"></div>
+      <div class="row" style="margin-top:12px">
+        <button id="compute">Compute allocation</button>
+        <button id="toggleMore" class="secondary">Show other strategies</button>
       </div>
+    </div>
 
-      <div class="row">
-        <label>Cap (0…1, optional)
-          <input type="number" name="cap" step="0.05" placeholder="e.g. 0.30" />
-        </label>
-        <label>Age (optional)
-          <input type="number" name="age" min="18" max="100" placeholder="e.g. 32" />
-        </label>
+    <div id="results" class="card" style="display:none">
+      <h2 style="margin:0 0 .4rem">Allocation result</h2>
+      <div class="hint" id="status"></div>
+      <div class="grid two">
+        <div>
+          <canvas id="pie" height="220"></canvas>
+        </div>
+        <div>
+          <table id="weightsTable"><thead><tr><th>Asset</th><th>Weight</th></tr></thead><tbody></tbody></table>
+        </div>
       </div>
+      <pre id="raw" class="hint" style="margin-top:12px"></pre>
+    </div>
 
-      <fieldset>
-        <legend class="hint">Profile & Liabilities</legend>
-        <label>Has fixed liabilities to match?
-          <select name="has_liabilities">
-            <option value="no" selected>No</option>
-            <option value="yes">Yes — use liability-matching first</option>
-          </select>
-        </label>
-        <label>Risk profile
-          <select name="risk_profile">
-            <option value="preserve">Capital preservation (low downside)</option>
-            <option value="balanced" selected>Balanced</option>
-            <option value="aggressive">Aggressive / long horizon</option>
-          </select>
-        </label>
-      </fieldset>
-
-      <div class="hint">Tip: for local testing, run this file via a local web server (e.g. <code>python -m http.server</code>) so your browser sends a proper <code>Origin</code> header. Make sure your FastAPI CORS allows that origin.</div>
-
-      <button id="go" type="submit">Compute allocation</button>
-    </form>
-
-    <p id="status" class="hint"></p>
-    <pre id="out"></pre>
-
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script>
-      const form = document.getElementById("alloc-form");
-      const btn = document.getElementById("go");
-      const out = document.getElementById("out");
-      const statusEl = document.getElementById("status");
+      // ===== CONFIG =====
+      const API = "https://allocator.onrender.com"; // your Render FastAPI base
 
-      function profileToParams(profile){
-        // Map user-friendly profiles to simple knobs you can read server-side.
-        switch(profile){
-          case 'preserve': return { target_vol: 0.06, cap_default: 0.25 };
-          case 'aggressive': return { target_vol: 0.16, cap_default: 0.60 };
-          default: return { target_vol: 0.10, cap_default: 0.40 };
+      // Profile rules -> strategy mapping
+      const STRATEGIES = [
+        {
+          key: 'near_retirement',
+          name: 'Near Retirement',
+          desc: 'Limit large losses; smooth withdrawals; align with predictable income.',
+          rationale: 'Because you\'re close to retirement or have short horizon/liabilities, we emphasize drawdown resilience.',
+          params: { target_vol: 0.07, cap: 0.25, method: 'mv_drawdown', use_norisk: true }
+        },
+        {
+          key: 'pre_retirement',
+          name: 'Peak Earnings / Pre-Retirement',
+          desc: 'Blend of mean-variance and drawdown awareness.',
+          rationale: 'Shifting toward capital preservation but still seeking growth.',
+          params: { target_vol: 0.10, cap: 0.35, method: 'mv_blend', use_norisk: false }
+        },
+        {
+          key: 'middle_age',
+          name: 'Middle Age',
+          desc: 'Mean-variance with moderate growth tilt.',
+          rationale: 'Balance growth and stability; reasonable risk-reward.',
+          params: { target_vol: 0.12, cap: 0.40, method: 'mv_growth', use_norisk: false }
+        },
+        {
+          key: 'young',
+          name: 'Young / Early-Career',
+          desc: 'Half-Kelly or high-growth mean-variance.',
+          rationale: 'Higher risk tolerance and time to recover drawdowns.',
+          params: { target_vol: 0.16, cap: 0.60, method: 'half_kelly', use_norisk: false }
+        }
+      ];
+
+      function categorize({age, horizon, has_liabilities, goal}){
+        // Simple, transparent rules; tweak as you like
+        if (has_liabilities || (horizon && horizon <= 5) || age >= 60) return 'near_retirement';
+        if ((age >= 50 && age < 60) || (horizon && horizon <= 10)) return 'pre_retirement';
+        if ((age >= 35 && age < 50) || (horizon && horizon <= 20)) return 'middle_age';
+        return 'young';
+      }
+
+      function strategyByKey(key){ return STRATEGIES.find(s => s.key === key); }
+
+      function profileToRiskLabel(key){
+        switch(key){
+          case 'near_retirement': return 'Conservative (drawdown-aware)';
+          case 'pre_retirement': return 'Moderate (blend)';
+          case 'middle_age': return 'Balanced growth';
+          case 'young': return 'Aggressive growth';
+          default: return 'Balanced';
         }
       }
 
-      async function tryPost(url, payload){
-        const res = await fetch(url, {
-          method: "POST",
-          headers: {"Content-Type":"application/json"},
-          body: JSON.stringify(payload)
+      // ===== UI wiring =====
+      const wiz = document.getElementById('wizard');
+      const rec = document.getElementById('rec');
+      const recText = document.getElementById('recText');
+      const strategyCards = document.getElementById('strategyCards');
+      const toggleMoreBtn = document.getElementById('toggleMore');
+      const computeBtn = document.getElementById('compute');
+      const resetBtn = document.getElementById('reset');
+
+      const results = document.getElementById('results');
+      const statusEl = document.getElementById('status');
+      const raw = document.getElementById('raw');
+      const weightsTableBody = document.querySelector('#weightsTable tbody');
+
+      let chosenStrategy = null; // full strategy object
+      let recommendedKey = null;
+      let pieChart = null;
+
+      function makeCard(strategy, recommended=false){
+        const div = document.createElement('div');
+        div.className = 'strategy';
+        div.innerHTML = `
+          <h3>${strategy.name} ${recommended ? '<span class="pill">Recommended</span>' : ''}</h3>
+          <p>${strategy.desc}</p>
+          <p class="muted">Risk focus: ${profileToRiskLabel(strategy.key)} · Cap ${Math.round(strategy.params.cap*100)}% · Target vol ${(strategy.params.target_vol*100).toFixed(0)}%</p>
+          <div class="row">
+            <button data-choose="${strategy.key}">Use this</button>
+            <button class="secondary" data-explain="${strategy.key}">Why this?</button>
+          </div>`;
+        return div;
+      }
+
+      function renderStrategies(recKey){
+        strategyCards.innerHTML = '';
+        STRATEGIES.forEach(s => {
+          strategyCards.appendChild(makeCard(s, s.key === recKey));
         });
-        if(!res.ok){
-          const text = await res.text().catch(()=>"<no body>");
-          const err = new Error(`HTTP ${res.status} on ${url}:\n` + text);
-          err.status = res.status;
-          throw err;
+        strategyCards.querySelectorAll('button[data-choose]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            chosenStrategy = strategyByKey(btn.dataset.choose);
+            computeBtn.scrollIntoView({behavior:'smooth'});
+          });
+        });
+        strategyCards.querySelectorAll('button[data-explain]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const s = strategyByKey(btn.dataset.explain);
+            alert(`${s.name}:
+
+${s.rationale}`);
+          });
+        });
+      }
+
+      wiz.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const fd = new FormData(wiz);
+        const answers = {
+          name: (fd.get('name')||'').trim(),
+          age: Number(fd.get('age')||0),
+          has_liabilities: fd.get('has_liabilities') === 'yes',
+          horizon: fd.get('horizon') ? Number(fd.get('horizon')) : undefined,
+          goal: fd.get('goal') || 'retirement',
+          target_year: fd.get('target_year') ? Number(fd.get('target_year')) : undefined,
+          target_amount: fd.get('target_amount') ? Number(fd.get('target_amount')) : undefined,
+          beta_window: Number(fd.get('beta_window') || 40),
+          cap_input: fd.get('cap') ? Number(fd.get('cap')) : undefined,
+        };
+
+        recommendedKey = categorize(answers);
+        const recS = strategyByKey(recommendedKey);
+        const effCap = answers.cap_input ?? recS.params.cap;
+        const greet = answers.name ? `, ${answers.name.split(' ')[0]}` : '';
+        recText.textContent = `We suggest “${recS.name}”${greet}. ${recS.rationale}`;
+        renderStrategies(recommendedKey);
+        chosenStrategy = recS; // preselect
+        rec.style.display = '';
+        results.style.display = 'none';
+      });
+
+      resetBtn.addEventListener('click', () => {
+        wiz.reset();
+        rec.style.display = 'none';
+        results.style.display = 'none';
+        raw.textContent = '';
+        weightsTableBody.innerHTML = '';
+        if (pieChart) { pieChart.destroy(); pieChart = null; }
+      });
+
+      let showAll = true;
+      toggleMoreBtn.addEventListener('click', () => {
+        showAll = !showAll;
+        // Simple UX: toggle filtering to recommended-only
+        if (showAll) renderStrategies(recommendedKey);
+        else {
+          strategyCards.innerHTML = '';
+          const recS = strategyByKey(recommendedKey);
+          strategyCards.appendChild(makeCard(recS, true));
+        }
+      });
+
+      async function tryPost(url, payload){
+        const res = await fetch(url, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+        if (!res.ok) {
+          const txt = await res.text().catch(()=>'<no body>');
+          const err = new Error(`HTTP ${res.status} on ${url}:
+` + txt);
+          err.status = res.status; throw err;
         }
         return res.json();
       }
 
-      form.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        out.textContent = "";
-        statusEl.className = "hint";
-        statusEl.textContent = "Running…";
-        btn.disabled = true;
+      function extractWeights(json){
+        // Be flexible: try common shapes
+        if (!json) return {};
+        if (json.weights && typeof json.weights === 'object') return json.weights;
+        if (Array.isArray(json.allocations)) {
+          const out = {}; json.allocations.forEach(x => { if (x.asset && (x.weight!=null)) out[x.asset] = x.weight; }); return out;
+        }
+        // last resort: scan top-level number fields 0..1
+        const out = {}; Object.entries(json).forEach(([k,v]) => { if (typeof v === 'number' && v>=0 && v<=1) out[k]=v; }); return out;
+      }
 
-        const fd = new FormData(form);
-        const API = (fd.get("api") || "").replace(/\/$/, "");
-        const beta_window = Number(fd.get("beta_window") || 40);
-        const capInput = fd.get("cap");
-        const cap = capInput ? Number(capInput) : undefined;
-        const has_liab = fd.get("has_liabilities") === 'yes';
-        const risk_profile = fd.get("risk_profile");
-        const age = fd.get("age") ? Number(fd.get("age")) : undefined;
+      function renderTable(weights){
+        weightsTableBody.innerHTML = '';
+        Object.entries(weights).forEach(([asset, w]) => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td>${asset}</td><td>${(w*100).toFixed(1)}%</td>`;
+          weightsTableBody.appendChild(tr);
+        });
+      }
 
-        const knobs = profileToParams(risk_profile);
-        const effectiveCap = (typeof cap === 'number' && !Number.isNaN(cap)) ? cap : knobs.cap_default;
+      function renderPie(weights){
+        const ctx = document.getElementById('pie');
+        const labels = Object.keys(weights);
+        const data = Object.values(weights).map(x=>Math.max(0,x));
+        if (pieChart) pieChart.destroy();
+        pieChart = new Chart(ctx, {
+          type: 'pie',
+          data: { labels, datasets: [{ data }] },
+          options: { plugins: { legend: { position: 'bottom' } } }
+        });
+      }
 
-        // Payload the backend can evolve to accept.
+      computeBtn.addEventListener('click', async () => {
+        if (!chosenStrategy) { alert('Pick a strategy first.'); return; }
+        const fd = new FormData(wiz);
+        const age = Number(fd.get('age')||0);
+        const has_liabilities = fd.get('has_liabilities') === 'yes';
+        const beta_window = Number(fd.get('beta_window')||40);
+        const cap_input = fd.get('cap') ? Number(fd.get('cap')) : undefined;
+
+        // Build payload from chosen strategy + overrides
         const payload = {
           beta_window,
-          cap: effectiveCap,
-          risk_profile,
-          target_vol: knobs.target_vol,
+          risk_profile: chosenStrategy.key,
+          target_vol: chosenStrategy.params.target_vol,
+          cap: (typeof cap_input === 'number' && !Number.isNaN(cap_input)) ? cap_input : chosenStrategy.params.cap,
           age,
-          has_liabilities: has_liab
+          has_liabilities,
+          method: chosenStrategy.params.method
         };
 
-        try{
-          // If user has liabilities, try the norisk-first route; else, straight allocator.
-          const primary = has_liab ? `${API}/norisk/allocate` : `${API}/allocate`;
-          const fallback = has_liab ? `${API}/allocate` : `${API}/norisk/allocate`;
+        const primary = has_liabilities || chosenStrategy.params.use_norisk ? `${API}/norisk/allocate` : `${API}/allocate`;
+        const fallback = primary.endsWith('/allocate') ? `${API}/allocate` : `${API}/norisk/allocate`;
 
+        results.style.display = '';
+        statusEl.className = 'hint';
+        statusEl.textContent = 'Computing…';
+        raw.textContent = '';
+        weightsTableBody.innerHTML = '';
+
+        try{
           let json;
           try {
             json = await tryPost(primary, payload);
           } catch (err) {
-            // If the endpoint doesn't exist (404) or not allowed (405), try the fallback.
             if (err.status === 404 || err.status === 405) {
               json = await tryPost(fallback, payload);
-            } else {
-              throw err;
-            }
+            } else { throw err; }
           }
-
-          out.textContent = JSON.stringify(json, null, 2);
-          statusEl.textContent = "Done.";
-          statusEl.className = "ok";
-        } catch(err){
+          const weights = extractWeights(json);
+          renderTable(weights);
+          renderPie(weights);
+          raw.textContent = JSON.stringify(json, null, 2);
+          statusEl.textContent = 'Done.';
+          statusEl.className = 'ok';
+        } catch (err){
           statusEl.textContent = err.message;
-          statusEl.className = "error";
-          out.textContent = "";
-          console.error(err);
-        } finally {
-          btn.disabled = false;
+          statusEl.className = 'error';
         }
       });
     </script>
