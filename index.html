@@ -278,14 +278,21 @@ ${s.rationale}`);
       });
 
       async function tryPost(url, payload){
-        const res = await fetch(url, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)});
-        if (!res.ok) {
-          const txt = await res.text().catch(()=>'<no body>');
-          const err = new Error(`HTTP ${res.status} on ${url}:
+        // 25s timeout to avoid hanging UI
+        const controller = new AbortController();
+        const t = setTimeout(() => controller.abort(), 25000);
+        try {
+          const res = await fetch(url, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload), signal: controller.signal });
+          if (!res.ok) {
+            const txt = await res.text().catch(()=>'<no body>');
+            const err = new Error(`HTTP ${res.status} on ${url}:
 ` + txt);
-          err.status = res.status; throw err;
+            err.status = res.status; throw err;
+          }
+          return await res.json();
+        } finally {
+          clearTimeout(t);
         }
-        return res.json();
       }
 
       function extractWeights(json){
@@ -339,8 +346,9 @@ ${s.rationale}`);
           method: chosenStrategy.params.method
         };
 
-        const primary = has_liabilities || chosenStrategy.params.use_norisk ? `${API}/norisk/allocate` : `${API}/allocate`;
-        const fallback = primary.endsWith('/allocate') ? `${API}/allocate` : `${API}/norisk/allocate`;
+        const primaryIsNorisk = (has_liabilities || chosenStrategy.params.use_norisk);
+        const primary = primaryIsNorisk ? `${API}/norisk/allocate` : `${API}/allocate`;
+        const fallback = primaryIsNorisk ? `${API}/allocate` : `${API}/norisk/allocate`;
 
         results.style.display = '';
         statusEl.className = 'hint';
