@@ -184,8 +184,10 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script>
-      const API = "https://allocator.onrender.com";
+      // ===== CONFIG =====
+      const API = "https://allocator.onrender.com"; // change if your API URL differs
 
+      // ===== Grab elements =====
       const wiz = document.getElementById('wizard');
       const rec = document.getElementById('rec');
       const recText = document.getElementById('recText');
@@ -204,6 +206,7 @@
       const weightsTableBody = document.querySelector('#weightsTable tbody');
       const muAssumptions = document.getElementById('muAssumptions');
 
+      // μ controls + show/hide logic
       const muMethodSel = document.getElementById('mu_method');
       const rows = {
         market_col: document.getElementById('market_col_row'),
@@ -225,13 +228,35 @@
       muMethodSel.addEventListener('change', updateMuRows);
       updateMuRows();
 
+      // Wizard submit just reveals the lower sections (keeps your original flow)
+      wiz.addEventListener('submit', (e) => {
+        e.preventDefault();
+        rec.style.display = '';
+        macro.style.display = '';
+        results.style.display = 'none';
+        statusEl.textContent = '';
+        raw.textContent = '';
+        weightsTableBody.innerHTML = '';
+      });
+
+      resetBtn.addEventListener('click', () => {
+        wiz.reset();
+        updateMuRows();
+        rec.style.display = 'none';
+        macro.style.display = 'none';
+        results.style.display = 'none';
+        statusEl.textContent = '';
+        raw.textContent = '';
+        weightsTableBody.innerHTML = '';
+      });
+
       function assumptionsText(p){
         const m = (p.mu_method || '').toLowerCase();
         if (m === 'capm') return `μ: CAPM · market=${p.market_col || 'Global_Equities'} · window=${p.capm_window}m`;
         if (m === 'ewma') return `μ: EWMA · span=${p.ewma_span}m`;
         if (m === 'trailing') return `μ: Trailing mean · window=${p.trailing_window}m`;
         if (m === 'var1') return `μ: VAR(1) · window=${p.var_window}m`;
-        if (m === 'arima') return `μ: ARIMA(${p.arima_order})`;
+        if (m === 'arima') return `μ: ARIMA(${(p.arima_order || []).join(',')})`;
         if (m === 'histmean') return `μ: Historical mean`;
         return `μ: ${m || 'unknown'}`;
       }
@@ -240,41 +265,86 @@
         const controller = new AbortController();
         const t = setTimeout(() => controller.abort(), 25000);
         try {
-          const res = await fetch(url, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload), signal: controller.signal });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          return await res.json();
-        } finally { clearTimeout(t); }
+          const res = await fetch(url, {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify(payload),
+            signal: controller.signal
+          });
+          const text = await res.text();
+          if (!res.ok) {
+            throw new Error(`HTTP ${res.status}: ${text || '<no body>'}`);
+          }
+          return JSON.parse(text);
+        } finally {
+          clearTimeout(t);
+        }
+      }
+
+      function renderTable(weights){
+        weightsTableBody.innerHTML = '';
+        Object.entries(weights || {}).forEach(([asset, w]) => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td>${asset}</td><td>${(w*100).toFixed(2)}%</td>`;
+          weightsTableBody.appendChild(tr);
+        });
+      }
+
+      let pieChart;
+      function renderPie(weights){
+        const el = document.getElementById('pie');
+        const labels = Object.keys(weights || {});
+        const data = Object.values(weights || {}).map(x => Math.max(0, x));
+        if (pieChart) pieChart.destroy();
+        pieChart = new Chart(el, {
+          type: 'pie',
+          data: { labels, datasets: [{ data }] },
+          options: { plugins: { legend: { position: 'bottom' } } }
+        });
       }
 
       computeBtn.addEventListener('click', async () => {
-        const fd = new FormData(wiz);
-        const payload = {
-          beta_window: Number(fd.get('beta_window')||40),
-          cap: fd.get('cap') ? Number(fd.get('cap')) : undefined,
-          mu_method: fd.get('mu_method'),
-          market_col: fd.get('market_col'),
-          capm_window: Number(fd.get('capm_window')||60),
-          ewma_span: Number(fd.get('ewma_span')||36),
-          trailing_window: Number(fd.get('trailing_window')||36),
-          var_window: Number(fd.get('var_window')||60),
-          arima_order: (fd.get('arima_order')||'1,0,0').split(',').map(s=>Number(s.trim()))
-        };
-        results.style.display = '';
-        statusEl.textContent = 'Computing...';
-        muAssumptions.textContent = assumptionsText(payload);
-        try{
-          const json = await tryPost(`${API}/allocate`, payload);
-          const weights = json.weights;
+        try {
+          const fd = new FormData(wiz);
+          const payload = {
+            beta_window: Number(fd.get('beta_window')||40),
+            periods_per_year: 12,
+            t_threshold: 2.0,
+            t_mode: 'linear',
+            fixed_start_date: '2012-01-31',
+            drop_assets: [],
+
+            cap: fd.get('cap') ? Number(fd.get('cap')) : undefined,
+
+            // μ model:
+            mu_method: fd.get('mu_method') || 'capm',
+            market_col: fd.get('market_col') || 'Global_Equities',
+            capm_window: Number(fd.get('capm_window') || 60),
+            ewma_span: Number(fd.get('ewma_span') || 36),
+            trailing_window: Number(fd.get('trailing_window') || 36),
+            var_window: Number(fd.get('var_window') || 60),
+            arima_order: (fd.get('arima_order') || '1,0,0').split(',').map(s=>Number(s.trim())),
+          };
+
+          results.style.display = '';
+          statusEl.className = 'hint';
+          statusEl.textContent = 'Computing…';
+          muAssumptions.textContent = assumptionsText(payload);
+          raw.textContent = '';
           weightsTableBody.innerHTML = '';
-          Object.entries(weights).forEach(([asset, weight])=>{
-            const tr = document.createElement('tr');
-            tr.innerHTML = `<td>${asset}</td><td>${(weight*100).toFixed(2)}%</td>`;
-            weightsTableBody.appendChild(tr);
-          });
-          statusEl.textContent = 'Done.';
+
+          const json = await tryPost(`${API}/allocate`, payload);
+          if (!json || !json.weights) throw new Error('No weights returned from API.');
+
+          renderTable(json.weights);
+          renderPie(json.weights);
           raw.textContent = JSON.stringify(json, null, 2);
-        }catch(err){
-          statusEl.textContent = err.message;
+          statusEl.textContent = 'Done.';
+          statusEl.className = 'ok';
+        } catch (err){
+          console.error(err);
+          statusEl.textContent = String(err.message || err);
+          statusEl.className = 'error';
         }
       });
     </script>
