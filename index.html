@@ -14,11 +14,9 @@
       .card{background:#f6f8fb;border:1px solid #e6eaf0;border-radius:14px;padding:14px;margin:0 0 var(--gap)}
       form{display:grid;gap:var(--gap)}
       fieldset{border:0;padding:0;margin:0;display:grid;gap:10px}
-      /* Labels stack text over input to avoid left blank columns */
       label{display:flex;flex-direction:column;gap:6px}
       input,select,button,textarea{font:inherit}
       input,select,textarea{padding:.45rem .6rem;border:1px solid #cfd6e4;border-radius:10px;background:#fff;width:100%}
-      /* Responsive rows that never overflow */
       .row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--gap)}
       .row-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--gap)}
       @media (max-width: 900px){ .row-3{grid-template-columns:repeat(2,minmax(0,1fr));} }
@@ -46,6 +44,7 @@
       .badge.high{background:#fff2e6;border-color:#fde1c2;color:#b54708}
       .badge.low{background:#e7fff6;border-color:#c6f7e2;color:#056449}
       .badge.neutral{background:#eef3ff;border-color:#dfe6ff;color:#0b4}
+      .hidden{display:none}
     </style>
   </head>
   <body>
@@ -108,6 +107,39 @@
           </label>
         </fieldset>
 
+        <!-- μ MODEL selection -->
+        <fieldset class="row-3">
+          <label>μ method
+            <select name="mu_method" id="mu_method">
+              <option value="capm" selected>CAPM</option>
+              <option value="ewma">EWMA</option>
+              <option value="trailing">Trailing mean</option>
+              <option value="var1">VAR(1)</option>
+              <option value="arima">ARIMA(1,0,0)</option>
+              <option value="histmean">Historical mean</option>
+            </select>
+          </label>
+          <label id="market_col_row">Market column (CAPM)
+            <input type="text" name="market_col" id="market_col" value="Global_Equities" />
+          </label>
+          <label id="capm_window_row">CAPM window (months)
+            <input type="number" name="capm_window" id="capm_window" value="60" min="12" max="180" />
+          </label>
+
+          <label id="ewma_span_row" class="hidden">EWMA span (months)
+            <input type="number" name="ewma_span" id="ewma_span" value="36" min="3" max="120" />
+          </label>
+          <label id="trailing_window_row" class="hidden">Trailing window (months)
+            <input type="number" name="trailing_window" id="trailing_window" value="36" min="6" max="120" />
+          </label>
+          <label id="var_window_row" class="hidden">VAR window (months)
+            <input type="number" name="var_window" id="var_window" value="60" min="24" max="180" />
+          </label>
+          <label id="arima_order_row" class="hidden">ARIMA order (p,d,q)
+            <input type="text" name="arima_order" id="arima_order" value="1,0,0" />
+          </label>
+        </fieldset>
+
         <div class="hint">We use your answers to pick a baseline strategy. You can still choose another before computing.</div>
         <div class="row">
           <button type="submit">Recommend a strategy</button>
@@ -138,6 +170,7 @@
     <div id="results" class="card" style="display:none">
       <h2 style="margin:0 0 .4rem">Allocation result</h2>
       <div class="hint" id="status"></div>
+      <div class="hint" id="muAssumptions" style="margin:.4rem 0 .6rem"></div>
       <div class="grid two">
         <div>
           <canvas id="pie" height="220"></canvas>
@@ -151,61 +184,8 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script>
-      // ===== CONFIG =====
-      const API = "https://allocator.onrender.com"; // your Render FastAPI base
+      const API = "https://allocator.onrender.com";
 
-      // Profile rules -> strategy mapping
-      const STRATEGIES = [
-        {
-          key: 'near_retirement',
-          name: 'Near Retirement',
-          desc: 'Limit large losses; smooth withdrawals; align with predictable income.',
-          rationale: 'Because you\'re close to retirement or have short horizon/liabilities, we emphasize drawdown resilience.',
-          params: { target_vol: 0.07, cap: 0.25, method: 'mv_drawdown', use_norisk: true }
-        },
-        {
-          key: 'pre_retirement',
-          name: 'Peak Earnings / Pre-Retirement',
-          desc: 'Blend of mean-variance and drawdown awareness.',
-          rationale: 'Shifting toward capital preservation but still seeking growth.',
-          params: { target_vol: 0.10, cap: 0.35, method: 'mv_blend', use_norisk: false }
-        },
-        {
-          key: 'middle_age',
-          name: 'Middle Age',
-          desc: 'Mean-variance with moderate growth tilt.',
-          rationale: 'Balance growth and stability; reasonable risk-reward.',
-          params: { target_vol: 0.12, cap: 0.40, method: 'mv_growth', use_norisk: false }
-        },
-        {
-          key: 'young',
-          name: 'Young / Early-Career',
-          desc: 'Half-Kelly or high-growth mean-variance.',
-          rationale: 'Higher risk tolerance and time to recover drawdowns.',
-          params: { target_vol: 0.16, cap: 0.60, method: 'half_kelly', use_norisk: false }
-        }
-      ];
-
-      function categorize({age, horizon, has_liabilities, goal}){
-        if (has_liabilities || (horizon && horizon <= 5) || age >= 60) return 'near_retirement';
-        if ((age >= 50 && age < 60) || (horizon && horizon <= 10)) return 'pre_retirement';
-        if ((age >= 35 && age < 50) || (horizon && horizon <= 20)) return 'middle_age';
-        return 'young';
-      }
-
-      function strategyByKey(key){ return STRATEGIES.find(s => s.key === key); }
-
-      function profileToRiskLabel(key){
-        switch(key){
-          case 'near_retirement': return 'Conservative (drawdown-aware)';
-          case 'pre_retirement': return 'Moderate (blend)';
-          case 'middle_age': return 'Balanced growth';
-          case 'young': return 'Aggressive growth';
-          default: return 'Balanced';
-        }
-      }
-
-      // ===== UI wiring =====
       const wiz = document.getElementById('wizard');
       const rec = document.getElementById('rec');
       const recText = document.getElementById('recText');
@@ -222,220 +202,79 @@
       const statusEl = document.getElementById('status');
       const raw = document.getElementById('raw');
       const weightsTableBody = document.querySelector('#weightsTable tbody');
+      const muAssumptions = document.getElementById('muAssumptions');
 
-      let chosenStrategy = null; // full strategy object
-      let recommendedKey = null;
-      let pieChart = null;
-      let cpiChart = null;
-
-      function makeCard(strategy, recommended=false){
-        const div = document.createElement('div');
-        div.className = 'strategy';
-        div.innerHTML = `
-          <h3>${strategy.name} ${recommended ? '<span class="pill">Recommended</span>' : ''}</h3>
-          <p>${strategy.desc}</p>
-          <p class="muted">Risk focus: ${profileToRiskLabel(strategy.key)} · Cap ${Math.round(strategy.params.cap*100)}% · Target vol ${(strategy.params.target_vol*100).toFixed(0)}%</p>
-          <div class="row">
-            <button data-choose="${strategy.key}">Use this</button>
-            <button class="secondary" data-explain="${strategy.key}">Why this?</button>
-          </div>`;
-        return div;
+      const muMethodSel = document.getElementById('mu_method');
+      const rows = {
+        market_col: document.getElementById('market_col_row'),
+        capm_window: document.getElementById('capm_window_row'),
+        ewma_span: document.getElementById('ewma_span_row'),
+        trailing_window: document.getElementById('trailing_window_row'),
+        var_window: document.getElementById('var_window_row'),
+        arima_order: document.getElementById('arima_order_row'),
+      };
+      function updateMuRows(){
+        Object.values(rows).forEach(el => el.classList.add('hidden'));
+        const m = muMethodSel.value;
+        if (m === 'capm') { rows.market_col.classList.remove('hidden'); rows.capm_window.classList.remove('hidden'); }
+        else if (m === 'ewma') { rows.ewma_span.classList.remove('hidden'); }
+        else if (m === 'trailing') { rows.trailing_window.classList.remove('hidden'); }
+        else if (m === 'var1') { rows.var_window.classList.remove('hidden'); }
+        else if (m === 'arima') { rows.arima_order.classList.remove('hidden'); }
       }
+      muMethodSel.addEventListener('change', updateMuRows);
+      updateMuRows();
 
-      function renderStrategies(recKey){
-        strategyCards.innerHTML = '';
-        STRATEGIES.forEach(s => {
-          strategyCards.appendChild(makeCard(s, s.key === recKey));
-        });
-        strategyCards.querySelectorAll('button[data-choose]').forEach(btn => {
-          btn.addEventListener('click', () => {
-            chosenStrategy = strategyByKey(btn.dataset.choose);
-            computeBtn.scrollIntoView({behavior:'smooth'});
-          });
-        });
-        strategyCards.querySelectorAll('button[data-explain]').forEach(btn => {
-          btn.addEventListener('click', () => {
-            const s = strategyByKey(btn.dataset.explain);
-            alert(`${s.name}:
-
-${s.rationale}`);
-          });
-        });
+      function assumptionsText(p){
+        const m = (p.mu_method || '').toLowerCase();
+        if (m === 'capm') return `μ: CAPM · market=${p.market_col || 'Global_Equities'} · window=${p.capm_window}m`;
+        if (m === 'ewma') return `μ: EWMA · span=${p.ewma_span}m`;
+        if (m === 'trailing') return `μ: Trailing mean · window=${p.trailing_window}m`;
+        if (m === 'var1') return `μ: VAR(1) · window=${p.var_window}m`;
+        if (m === 'arima') return `μ: ARIMA(${p.arima_order})`;
+        if (m === 'histmean') return `μ: Historical mean`;
+        return `μ: ${m || 'unknown'}`;
       }
-
-      wiz.addEventListener('submit', (e) => {
-        e.preventDefault();
-        const fd = new FormData(wiz);
-        const answers = {
-          name: (fd.get('name')||'').trim(),
-          age: Number(fd.get('age')||0),
-          has_liabilities: fd.get('has_liabilities') === 'yes',
-          horizon: fd.get('horizon') ? Number(fd.get('horizon')) : undefined,
-          goal: fd.get('goal') || 'retirement',
-          target_year: fd.get('target_year') ? Number(fd.get('target_year')) : undefined,
-          target_amount: fd.get('target_amount') ? Number(fd.get('target_amount')) : undefined,
-          beta_window: Number(fd.get('beta_window') || 40),
-          cap_input: fd.get('cap') ? Number(fd.get('cap')) : undefined,
-        };
-
-        recommendedKey = categorize(answers);
-        const recS = strategyByKey(recommendedKey);
-        const greet = answers.name ? `, ${answers.name.split(' ')[0]}` : '';
-        recText.textContent = `We suggest “${recS.name}”${greet}. ${recS.rationale}`;
-        renderStrategies(recommendedKey);
-        chosenStrategy = recS; // preselect
-        rec.style.display = '';
-        macro.style.display = '';
-        results.style.display = 'none';
-        loadMacro();
-      });
-
-      resetBtn.addEventListener('click', () => {
-        wiz.reset();
-        rec.style.display = 'none';
-        macro.style.display = 'none';
-        results.style.display = 'none';
-        raw.textContent = '';
-        weightsTableBody.innerHTML = '';
-        if (pieChart) { pieChart.destroy(); pieChart = null; }
-        if (cpiChart) { cpiChart.destroy(); cpiChart = null; }
-      });
-
-      let showAll = true;
-      toggleMoreBtn.addEventListener('click', () => {
-        showAll = !showAll;
-        if (showAll) renderStrategies(recommendedKey);
-        else {
-          strategyCards.innerHTML = '';
-          const recS = strategyByKey(recommendedKey);
-          strategyCards.appendChild(makeCard(recS, true));
-        }
-      });
 
       async function tryPost(url, payload){
         const controller = new AbortController();
         const t = setTimeout(() => controller.abort(), 25000);
         try {
           const res = await fetch(url, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload), signal: controller.signal });
-          if (!res.ok) {
-            const txt = await res.text().catch(()=>'<no body>');
-            const err = new Error(`HTTP ${res.status} on ${url}:
-` + txt);
-            err.status = res.status; throw err;
-          }
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
           return await res.json();
-        } finally {
-          clearTimeout(t);
-        }
-      }
-
-      async function loadMacro(){
-        // Regime label
-        try {
-          const j = await fetch(`${API}/regime`).then(r=>r.json());
-          const reg = (j.current_regime||'').toLowerCase();
-          regimeBadge.textContent = (reg||'unknown').toUpperCase();
-          regimeBadge.className = `badge ${reg}`;
-        } catch {}
-
-        // CPI YoY series (needs backend /cpi)
-        try {
-          const r = await fetch(`${API}/cpi`);
-          if (!r.ok) throw new Error(String(r.status));
-          const j = await r.json();
-          const labels = j.dates || [];
-          const data = j.yoy || [];
-          const ctx = document.getElementById('cpi');
-          if (cpiChart) cpiChart.destroy();
-          cpiChart = new Chart(ctx, {
-            type: 'line',
-            data: { labels, datasets: [{ label: 'CPI YoY %', data, tension: 0.25 }] },
-            options: { plugins: { legend: { position: 'bottom' } }, scales: { y: { title: { display: true, text: '% YoY' } } } }
-          });
-          cpiHint.textContent = '';
-        } catch(err){
-          cpiHint.textContent = 'Add a /cpi endpoint to the API to show the CPI YoY chart.';
-        }
-      }
-
-      function extractWeights(json){
-        if (!json) return {};
-        if (json.weights && typeof json.weights === 'object') return json.weights;
-        if (Array.isArray(json.allocations)) {
-          const out = {}; json.allocations.forEach(x => { if (x.asset && (x.weight!=null)) out[x.asset] = x.weight; }); return out;
-        }
-        const out = {}; Object.entries(json).forEach(([k,v]) => { if (typeof v === 'number' && v>=0 && v<=1) out[k]=v; }); return out;
-      }
-
-      function renderTable(weights){
-        weightsTableBody.innerHTML = '';
-        Object.entries(weights).forEach(([asset, w]) => {
-          const tr = document.createElement('tr');
-          tr.innerHTML = `<td>${asset}</td><td>${(w*100).toFixed(1)}%</td>`;
-          weightsTableBody.appendChild(tr);
-        });
-      }
-
-      function renderPie(weights){
-        const ctx = document.getElementById('pie');
-        const labels = Object.keys(weights);
-        const data = Object.values(weights).map(x=>Math.max(0,x));
-        if (pieChart) pieChart.destroy();
-        pieChart = new Chart(ctx, {
-          type: 'pie',
-          data: { labels, datasets: [{ data }] },
-          options: { plugins: { legend: { position: 'bottom' } } }
-        });
+        } finally { clearTimeout(t); }
       }
 
       computeBtn.addEventListener('click', async () => {
-        if (!chosenStrategy) { alert('Pick a strategy first.'); return; }
         const fd = new FormData(wiz);
-        const age = Number(fd.get('age')||0);
-        const has_liabilities = fd.get('has_liabilities') === 'yes';
-        const beta_window = Number(fd.get('beta_window')||40);
-        const cap_input = fd.get('cap') ? Number(fd.get('cap')) : undefined;
-
         const payload = {
-          beta_window,
-          risk_profile: chosenStrategy.key,
-          target_vol: chosenStrategy.params.target_vol,
-          cap: (typeof cap_input === 'number' && !Number.isNaN(cap_input)) ? cap_input : chosenStrategy.params.cap,
-          age,
-          has_liabilities,
-          method: (fd.get('method') || 'max_sharpe'),
-          max_drawdown: (fd.get('max_drawdown') ? Number(fd.get('max_drawdown')) / 100 : undefined)
+          beta_window: Number(fd.get('beta_window')||40),
+          cap: fd.get('cap') ? Number(fd.get('cap')) : undefined,
+          mu_method: fd.get('mu_method'),
+          market_col: fd.get('market_col'),
+          capm_window: Number(fd.get('capm_window')||60),
+          ewma_span: Number(fd.get('ewma_span')||36),
+          trailing_window: Number(fd.get('trailing_window')||36),
+          var_window: Number(fd.get('var_window')||60),
+          arima_order: (fd.get('arima_order')||'1,0,0').split(',').map(s=>Number(s.trim()))
         };
-
-        const primaryIsNorisk = (has_liabilities || chosenStrategy.params.use_norisk);
-        const primary = primaryIsNorisk ? `${API}/norisk/allocate` : `${API}/allocate`;
-        const fallback = primaryIsNorisk ? `${API}/allocate` : `${API}/norisk/allocate`;
-
         results.style.display = '';
-        statusEl.className = 'hint';
-        statusEl.textContent = 'Computing…';
-        raw.textContent = '';
-        weightsTableBody.innerHTML = '';
-
+        statusEl.textContent = 'Computing...';
+        muAssumptions.textContent = assumptionsText(payload);
         try{
-          let json;
-          try {
-            json = await tryPost(primary, payload);
-          } catch (err) {
-            if (err.status === 404 || err.status === 405) {
-              json = await tryPost(fallback, payload);
-            } else { throw err; }
-          }
-          const weights = extractWeights(json);
-          renderTable(weights);
-          renderPie(weights);
-          raw.textContent = JSON.stringify(json, null, 2);
+          const json = await tryPost(`${API}/allocate`, payload);
+          const weights = json.weights;
+          weightsTableBody.innerHTML = '';
+          Object.entries(weights).forEach(([asset, weight])=>{
+            const tr = document.createElement('tr');
+            tr.innerHTML = `<td>${asset}</td><td>${(weight*100).toFixed(2)}%</td>`;
+            weightsTableBody.appendChild(tr);
+          });
           statusEl.textContent = 'Done.';
-          statusEl.className = 'ok';
-          loadMacro();
-        } catch (err){
+          raw.textContent = JSON.stringify(json, null, 2);
+        }catch(err){
           statusEl.textContent = err.message;
-          statusEl.className = 'error';
         }
       });
     </script>
