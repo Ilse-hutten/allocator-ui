@@ -185,9 +185,24 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script>
       // ===== CONFIG =====
-      const API = "https://allocator.onrender.com"; // change if your API URL differs
+      const API = "https://allocator.onrender.com"; // <-- change if needed
 
-      // ===== Grab elements =====
+      // ===== Strategy cards (simple static choices) =====
+      const STRATEGIES = [
+        { key:'near_retirement', name:'Near Retirement', rationale:'Drawdown resilience.', params:{ target_vol:0.07, cap:0.25, method:'mv_drawdown', use_norisk:true } },
+        { key:'pre_retirement', name:'Pre-Retirement', rationale:'Blend growth & safety.', params:{ target_vol:0.10, cap:0.35, method:'mv_blend', use_norisk:false } },
+        { key:'middle_age', name:'Middle Age', rationale:'Balanced growth.', params:{ target_vol:0.12, cap:0.40, method:'mv_growth', use_norisk:false } },
+        { key:'young', name:'Young / Early-Career', rationale:'Aggressive growth.', params:{ target_vol:0.16, cap:0.60, method:'half_kelly', use_norisk:false } },
+      ];
+      function strategyByKey(k){ return STRATEGIES.find(s => s.key===k) || STRATEGIES[0]; }
+      function categorize({age,horizon,has_liabilities}){
+        if (has_liabilities || (horizon && horizon<=5) || age>=60) return 'near_retirement';
+        if ((age>=50 && age<60) || (horizon && horizon<=10)) return 'pre_retirement';
+        if ((age>=35 && age<50) || (horizon && horizon<=20)) return 'middle_age';
+        return 'young';
+      }
+
+      // ===== Elements =====
       const wiz = document.getElementById('wizard');
       const rec = document.getElementById('rec');
       const recText = document.getElementById('recText');
@@ -206,7 +221,6 @@
       const weightsTableBody = document.querySelector('#weightsTable tbody');
       const muAssumptions = document.getElementById('muAssumptions');
 
-      // μ controls + show/hide logic
       const muMethodSel = document.getElementById('mu_method');
       const rows = {
         market_col: document.getElementById('market_col_row'),
@@ -216,6 +230,7 @@
         var_window: document.getElementById('var_window_row'),
         arima_order: document.getElementById('arima_order_row'),
       };
+
       function updateMuRows(){
         Object.values(rows).forEach(el => el.classList.add('hidden'));
         const m = muMethodSel.value;
@@ -228,15 +243,55 @@
       muMethodSel.addEventListener('change', updateMuRows);
       updateMuRows();
 
-      // Wizard submit just reveals the lower sections (keeps your original flow)
+      function makeCard(s, recommended=false){
+        const div = document.createElement('div');
+        div.className = 'strategy';
+        div.innerHTML = `
+          <h3>${s.name} ${recommended ? '<span class="pill">Recommended</span>' : ''}</h3>
+          <p class="muted">${s.rationale}</p>
+          <div><button data-choose="${s.key}">Use this</button></div>
+        `;
+        return div;
+      }
+
+      function renderStrategies(recKey){
+        strategyCards.innerHTML = '';
+        STRATEGIES.forEach(s => strategyCards.appendChild(makeCard(s, s.key===recKey)));
+        strategyCards.querySelectorAll('button[data-choose]').forEach(btn => {
+          btn.addEventListener('click', () => { chosenStrategy = strategyByKey(btn.dataset.choose); });
+        });
+      }
+
+      let chosenStrategy = null; let showAll = true;
+      toggleMoreBtn.addEventListener('click', () => {
+        showAll = !showAll;
+        if (showAll) renderStrategies(recommendedKey);
+        else {
+          strategyCards.innerHTML = '';
+          strategyCards.appendChild(makeCard(strategyByKey(recommendedKey), true));
+        }
+      });
+
       wiz.addEventListener('submit', (e) => {
         e.preventDefault();
+        const fd = new FormData(wiz);
+        const answers = {
+          age: Number(fd.get('age')||0),
+          has_liabilities: fd.get('has_liabilities')==='yes',
+          horizon: fd.get('horizon') ? Number(fd.get('horizon')) : undefined,
+        };
+        const recKey = categorize(answers);
+        recommendedKey = recKey;
+        chosenStrategy = strategyByKey(recKey);
+        recText.textContent = `We suggest “${chosenStrategy.name}”.`;
+        renderStrategies(recKey);
         rec.style.display = '';
         macro.style.display = '';
         results.style.display = 'none';
         statusEl.textContent = '';
         raw.textContent = '';
         weightsTableBody.innerHTML = '';
+        loadMacro();    // load CPI + regime badge
       });
 
       resetBtn.addEventListener('click', () => {
@@ -248,7 +303,36 @@
         statusEl.textContent = '';
         raw.textContent = '';
         weightsTableBody.innerHTML = '';
+        if (window.cpiChart) { window.cpiChart.destroy(); window.cpiChart = null; }
       });
+
+      // ===== Macro panel =====
+      async function loadMacro(){
+        try {
+          const j = await fetch(`${API}/regime`).then(r=>r.json());
+          const reg = (j.current_regime||'').toLowerCase();
+          regimeBadge.textContent = (reg||'unknown').toUpperCase();
+          regimeBadge.className = `badge ${reg}`;
+        } catch {}
+
+        try {
+          const r = await fetch(`${API}/cpi`);
+          if (!r.ok) throw new Error(String(r.status));
+          const j = await r.json();
+          const labels = j.dates || [];
+          const data = j.yoy || [];
+          const ctx = document.getElementById('cpi');
+          if (window.cpiChart) window.cpiChart.destroy();
+          window.cpiChart = new Chart(ctx, {
+            type: 'line',
+            data: { labels, datasets: [{ label: 'CPI YoY %', data, tension: 0.25 }] },
+            options: { plugins: { legend: { position: 'bottom' } }, scales: { y: { title: { display: true, text: '% YoY' } } } }
+          });
+          cpiHint.textContent = '';
+        } catch(err){
+          cpiHint.textContent = 'CPI series unavailable.';
+        }
+      }
 
       function assumptionsText(p){
         const m = (p.mu_method || '').toLowerCase();
@@ -256,7 +340,7 @@
         if (m === 'ewma') return `μ: EWMA · span=${p.ewma_span}m`;
         if (m === 'trailing') return `μ: Trailing mean · window=${p.trailing_window}m`;
         if (m === 'var1') return `μ: VAR(1) · window=${p.var_window}m`;
-        if (m === 'arima') return `μ: ARIMA(${(p.arima_order || []).join(',')})`;
+        if (m === 'arima') return `μ: ARIMA(${(p.arima_order||[]).join(',')})`;
         if (m === 'histmean') return `μ: Historical mean`;
         return `μ: ${m || 'unknown'}`;
       }
@@ -272,13 +356,9 @@
             signal: controller.signal
           });
           const text = await res.text();
-          if (!res.ok) {
-            throw new Error(`HTTP ${res.status}: ${text || '<no body>'}`);
-          }
+          if (!res.ok) throw new Error(`HTTP ${res.status}: ${text || '<no body>'}`);
           return JSON.parse(text);
-        } finally {
-          clearTimeout(t);
-        }
+        } finally { clearTimeout(t); }
       }
 
       function renderTable(weights){
@@ -303,9 +383,12 @@
         });
       }
 
+      let recommendedKey = null;
+
       computeBtn.addEventListener('click', async () => {
-        try {
+        try{
           const fd = new FormData(wiz);
+          const has_liabilities = fd.get('has_liabilities') === 'yes';
           const payload = {
             beta_window: Number(fd.get('beta_window')||40),
             periods_per_year: 12,
@@ -313,10 +396,8 @@
             t_mode: 'linear',
             fixed_start_date: '2012-01-31',
             drop_assets: [],
-
             cap: fd.get('cap') ? Number(fd.get('cap')) : undefined,
-
-            // μ model:
+            // μ
             mu_method: fd.get('mu_method') || 'capm',
             market_col: fd.get('market_col') || 'Global_Equities',
             capm_window: Number(fd.get('capm_window') || 60),
@@ -341,6 +422,7 @@
           raw.textContent = JSON.stringify(json, null, 2);
           statusEl.textContent = 'Done.';
           statusEl.className = 'ok';
+          loadMacro(); // optional refresh
         } catch (err){
           console.error(err);
           statusEl.textContent = String(err.message || err);
